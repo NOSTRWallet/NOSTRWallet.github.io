@@ -12,6 +12,20 @@ export default defineConfig(() => ({
   plugins: [
     react(),
   ],
+  build: {
+    rollupOptions: {
+      output: {
+        assetFileNames: (assetInfo) => {
+          // Preserve manifest.webmanifest filename
+          if (assetInfo.name === 'manifest.webmanifest') {
+            return 'manifest.webmanifest';
+          }
+          // Default asset naming
+          return 'assets/[name]-[hash][extname]';
+        },
+      },
+    },
+  },
   test: {
     globals: true,
     environment: 'jsdom',
