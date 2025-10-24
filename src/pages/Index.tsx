@@ -5,11 +5,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Copy, Check, Bitcoin, KeyRound, RefreshCw, Wallet, Send, AlertCircle } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import * as bitcoin from 'bitcoinjs-lib';
 import { useQuery } from '@tanstack/react-query';
 import { SendBitcoinDialog } from '@/components/SendBitcoinDialog';
 import { useNsecAccess } from '@/hooks/useNsecAccess';
+import { useAppContext } from '@/hooks/useAppContext';
+import { BitcoinNetworkSelector } from '@/components/BitcoinNetworkSelector';
+import { getNetwork, getApiUrl } from '@/lib/bitcoin';
 
 const Index = () => {
   useSeoMeta({
@@ -19,32 +22,39 @@ const Index = () => {
 
   const { user } = useCurrentUser();
   const { hasNsecAccess } = useNsecAccess();
+  const { config } = useAppContext();
   const [copiedAddress, setCopiedAddress] = useState(false);
   const [copiedPubkey, setCopiedPubkey] = useState(false);
   const [isSendDialogOpen, setIsSendDialogOpen] = useState(false);
 
-  const getBitcoinAddress = (pubkeyHex: string): string => {
+  const network = config.bitcoinNetwork;
+
+  // Generate Bitcoin address based on current network
+  const bitcoinAddress = useMemo(() => {
+    if (!user) return '';
+    
     try {
-      const pubkeyBuffer = Buffer.from(pubkeyHex, 'hex');
+      const pubkeyBuffer = Buffer.from(user.pubkey, 'hex');
       const { address } = bitcoin.payments.p2tr({
         internalPubkey: pubkeyBuffer,
-        network: bitcoin.networks.bitcoin,
+        network: getNetwork(network),
       });
       return address || '';
     } catch (error) {
       console.error('Error generating Bitcoin address:', error);
       return '';
     }
-  };
-
-  const bitcoinAddress = user ? getBitcoinAddress(user.pubkey) : '';
+  }, [user, network]);
 
   const { data: addressData, isLoading: isLoadingBalance, error: balanceError, refetch: refetchBalance } = useQuery({
-    queryKey: ['bitcoin-balance', bitcoinAddress],
+    queryKey: ['bitcoin-balance', bitcoinAddress, network],
     queryFn: async () => {
       if (!bitcoinAddress) return null;
 
-      const response = await fetch(`https://blockstream.info/api/address/${bitcoinAddress}`);
+      const apiUrl = getApiUrl(network);
+      console.log(`Fetching balance for ${network}:`, bitcoinAddress, 'from', apiUrl);
+      
+      const response = await fetch(`${apiUrl}/address/${bitcoinAddress}`);
       if (!response.ok) {
         throw new Error('Failed to fetch balance');
       }
@@ -64,6 +74,7 @@ const Index = () => {
       };
     },
     enabled: !!bitcoinAddress,
+    staleTime: 0, // Always fetch fresh data when network changes
     refetchInterval: 30000,
   });
 
@@ -93,7 +104,10 @@ const Index = () => {
               <Wallet className="w-8 h-8 text-gray-900 dark:text-white" />
               <h1 className="text-2xl font-bold text-gray-900 dark:text-white">NOSTR Wallet</h1>
             </div>
-            {user && <LoginArea className="max-w-xs" />}
+            <div className="flex items-center gap-4">
+              <BitcoinNetworkSelector />
+              {user && <LoginArea className="max-w-xs" />}
+            </div>
           </div>
         </div>
       </header>
@@ -195,6 +209,14 @@ const Index = () => {
                     <>
                       <div className="bg-gray-50 dark:bg-gray-900 p-8 rounded-lg border">
                         <div className="text-center space-y-3">
+                          {(network === 'testnet' || network === 'testnet4') && (
+                            <div className="flex justify-center mb-2">
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-orange-100 dark:bg-orange-950 text-orange-700 dark:text-orange-300 text-xs font-medium rounded-full border border-orange-300 dark:border-orange-700">
+                                <span className="w-1.5 h-1.5 rounded-full bg-orange-500 animate-pulse" />
+                                {network === 'testnet4' ? 'Testnet4' : 'Testnet3'}
+                              </span>
+                            </div>
+                          )}
                           <div className="text-4xl md:text-5xl font-bold text-gray-900 dark:text-white">
                             {satsToBTC(addressData.totalBalance)}
                           </div>

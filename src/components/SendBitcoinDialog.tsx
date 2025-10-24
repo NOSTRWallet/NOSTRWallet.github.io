@@ -20,6 +20,7 @@ import {
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useCurrentUser } from '@/hooks/useCurrentUser';
 import { useNsecAccess } from '@/hooks/useNsecAccess';
+import { useAppContext } from '@/hooks/useAppContext';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import {
   npubToBitcoinAddress,
@@ -30,6 +31,7 @@ import {
   broadcastTransaction,
   satsToBTC,
   btcToSats,
+  getApiUrl,
 } from '@/lib/bitcoin';
 import { useToast } from '@/hooks/useToast';
 
@@ -43,7 +45,10 @@ type FeeSpeed = 'fastest' | 'halfHour' | 'hour' | 'economy';
 export function SendBitcoinDialog({ isOpen, onClose }: SendBitcoinDialogProps) {
   const { user } = useCurrentUser();
   const { hasNsecAccess, getPrivateKey } = useNsecAccess();
+  const { config } = useAppContext();
   const { toast } = useToast();
+
+  const network = config.bitcoinNetwork;
 
   const [recipient, setRecipient] = useState('');
   const [amount, setAmount] = useState('');
@@ -51,20 +56,22 @@ export function SendBitcoinDialog({ isOpen, onClose }: SendBitcoinDialogProps) {
   const [error, setError] = useState('');
   const [txId, setTxId] = useState('');
 
-  const senderAddress = user ? nostrPubkeyToBitcoinAddress(user.pubkey) : '';
+  const senderAddress = user ? nostrPubkeyToBitcoinAddress(user.pubkey, network) : '';
 
   // Fetch UTXOs
   const { data: utxos, isLoading: isLoadingUtxos } = useQuery({
-    queryKey: ['utxos', senderAddress],
-    queryFn: () => fetchUTXOs(senderAddress),
+    queryKey: ['utxos', senderAddress, network],
+    queryFn: () => fetchUTXOs(senderAddress, network),
     enabled: !!senderAddress && isOpen,
+    staleTime: 0,
   });
 
   // Fetch fee rates
   const { data: feeRates, isLoading: isLoadingFees } = useQuery({
-    queryKey: ['fee-rates'],
-    queryFn: getFeeRates,
+    queryKey: ['fee-rates', network],
+    queryFn: () => getFeeRates(network),
     enabled: isOpen,
+    staleTime: 0,
   });
 
   // Calculate total balance
@@ -94,8 +101,8 @@ export function SendBitcoinDialog({ isOpen, onClose }: SendBitcoinDialogProps) {
       let recipientAddress: string;
       try {
         if (recipient.startsWith('npub1')) {
-          recipientAddress = npubToBitcoinAddress(recipient);
-        } else if (recipient.startsWith('bc1')) {
+          recipientAddress = npubToBitcoinAddress(recipient, network);
+        } else if (recipient.startsWith('bc1') || recipient.startsWith('tb1')) {
           recipientAddress = recipient;
         } else {
           throw new Error('Invalid recipient format');
@@ -125,11 +132,12 @@ export function SendBitcoinDialog({ isOpen, onClose }: SendBitcoinDialogProps) {
         recipientAddress,
         amountSats,
         utxos,
-        feeRate
+        feeRate,
+        network
       );
 
       // Broadcast transaction
-      const txId = await broadcastTransaction(txHex);
+      const txId = await broadcastTransaction(txHex, network);
 
       return { txId, fee };
     },
@@ -193,7 +201,8 @@ export function SendBitcoinDialog({ isOpen, onClose }: SendBitcoinDialogProps) {
                 variant="outline"
                 className="flex-1"
                 onClick={() => {
-                  window.open(`https://blockstream.info/tx/${txId}`, '_blank');
+                  const explorerUrl = getApiUrl(network).replace('/api', '');
+                  window.open(`${explorerUrl}/tx/${txId}`, '_blank');
                 }}
               >
                 View on Explorer
@@ -272,7 +281,7 @@ export function SendBitcoinDialog({ isOpen, onClose }: SendBitcoinDialogProps) {
             <Label htmlFor="recipient">Recipient</Label>
             <Input
               id="recipient"
-              placeholder="npub1... or bc1p..."
+              placeholder={network === 'mainnet' ? 'npub1... or bc1p...' : 'npub1... or tb1...'}
               value={recipient}
               onChange={(e) => {
                 setRecipient(e.target.value);
@@ -280,7 +289,7 @@ export function SendBitcoinDialog({ isOpen, onClose }: SendBitcoinDialogProps) {
               }}
             />
             <p className="text-xs text-gray-500">
-              Enter a Nostr npub or Bitcoin address
+              Enter a Nostr npub or Bitcoin {network !== 'mainnet' ? `${network} ` : ''}address
             </p>
           </div>
 

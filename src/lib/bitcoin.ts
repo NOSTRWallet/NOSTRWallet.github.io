@@ -14,16 +14,47 @@ function getECPair(): ECPairAPI {
   return ECPair;
 }
 
+export type BitcoinNetwork = 'mainnet' | 'testnet' | 'testnet4';
+
+/**
+ * Get bitcoinjs-lib network object based on network type
+ */
+export function getNetwork(network: BitcoinNetwork): bitcoin.networks.Network {
+  // testnet4 uses the same network parameters as testnet3 in bitcoinjs-lib
+  return (network === 'testnet' || network === 'testnet4') 
+    ? bitcoin.networks.testnet 
+    : bitcoin.networks.bitcoin;
+}
+
+/**
+ * Get API base URL based on network
+ */
+export function getApiUrl(network: BitcoinNetwork): string {
+  if (network === 'testnet4') {
+    return 'https://mempool.space/testnet4/api';
+  } else if (network === 'testnet') {
+    return 'https://mempool.space/testnet/api';
+  }
+  return 'https://mempool.space/api';
+}
+
+/**
+ * Get Blockstream API base URL based on network (deprecated, use getApiUrl instead)
+ */
+export function getBlockstreamApiUrl(network: BitcoinNetwork): string {
+  return getApiUrl(network);
+}
+
 /**
  * Convert Nostr pubkey (hex) to Bitcoin Taproot address
  */
-export function nostrPubkeyToBitcoinAddress(pubkeyHex: string): string {
+export function nostrPubkeyToBitcoinAddress(pubkeyHex: string, network: BitcoinNetwork = 'mainnet'): string {
   try {
     const pubkeyBuffer = Buffer.from(pubkeyHex, 'hex');
 
     const { address } = bitcoin.payments.p2tr({
       internalPubkey: pubkeyBuffer,
-      network: bitcoin.networks.bitcoin,
+      network: getNetwork(network),
     });
 
     return address || '';
@@ -36,7 +67,7 @@ export function nostrPubkeyToBitcoinAddress(pubkeyHex: string): string {
 /**
  * Convert npub to Bitcoin Taproot address
  */
-export function npubToBitcoinAddress(npub: string): string {
+export function npubToBitcoinAddress(npub: string, network: BitcoinNetwork = 'mainnet'): string {
   try {
     const decoded = nip19.decode(npub);
 
@@ -45,7 +76,7 @@ export function npubToBitcoinAddress(npub: string): string {
     }
 
     const pubkeyHex = decoded.data as string;
-    return nostrPubkeyToBitcoinAddress(pubkeyHex);
+    return nostrPubkeyToBitcoinAddress(pubkeyHex, network);
   } catch (error) {
     console.error('Error converting npub to Bitcoin address:', error);
     throw error;
@@ -68,10 +99,11 @@ export interface UTXO {
 }
 
 /**
- * Fetch UTXOs for a Bitcoin address from Blockstream API
+ * Fetch UTXOs for a Bitcoin address from API
  */
-export async function fetchUTXOs(address: string): Promise<UTXO[]> {
-  const response = await fetch(`https://blockstream.info/api/address/${address}/utxo`);
+export async function fetchUTXOs(address: string, network: BitcoinNetwork = 'mainnet'): Promise<UTXO[]> {
+  const apiUrl = getApiUrl(network);
+  const response = await fetch(`${apiUrl}/address/${address}/utxo`);
 
   if (!response.ok) {
     throw new Error('Failed to fetch UTXOs');
@@ -81,16 +113,17 @@ export async function fetchUTXOs(address: string): Promise<UTXO[]> {
 }
 
 /**
- * Get recommended fee rates from Blockstream API
+ * Get recommended fee rates from API
  */
-export async function getFeeRates(): Promise<{
+export async function getFeeRates(network: BitcoinNetwork = 'mainnet'): Promise<{
   fastestFee: number;
   halfHourFee: number;
   hourFee: number;
   economyFee: number;
   minimumFee: number;
 }> {
-  const response = await fetch('https://blockstream.info/api/fee-estimates');
+  const apiUrl = getApiUrl(network);
+  const response = await fetch(`${apiUrl}/v1/fees/recommended`);
 
   if (!response.ok) {
     throw new Error('Failed to fetch fee estimates');
@@ -99,19 +132,20 @@ export async function getFeeRates(): Promise<{
   const data = await response.json();
 
   return {
-    fastestFee: Math.ceil(data['1'] || 1),
-    halfHourFee: Math.ceil(data['3'] || 1),
-    hourFee: Math.ceil(data['6'] || 1),
-    economyFee: Math.ceil(data['144'] || 1),
-    minimumFee: Math.ceil(data['504'] || 1),
+    fastestFee: data.fastestFee || 1,
+    halfHourFee: data.halfHourFee || 1,
+    hourFee: data.hourFee || 1,
+    economyFee: data.economyFee || 1,
+    minimumFee: data.minimumFee || 1,
   };
 }
 
 /**
  * Broadcast a transaction to the Bitcoin network
  */
-export async function broadcastTransaction(txHex: string): Promise<string> {
-  const response = await fetch('https://blockstream.info/api/tx', {
+export async function broadcastTransaction(txHex: string, network: BitcoinNetwork = 'mainnet'): Promise<string> {
+  const apiUrl = getApiUrl(network);
+  const response = await fetch(`${apiUrl}/tx`, {
     method: 'POST',
     body: txHex,
   });
@@ -131,6 +165,7 @@ export async function broadcastTransaction(txHex: string): Promise<string> {
  * @param amountSats - Amount to send in satoshis
  * @param utxos - Available UTXOs
  * @param feeRate - Fee rate in sat/vB
+ * @param network - Bitcoin network (mainnet or testnet)
  * @returns Signed transaction hex
  */
 export async function createBitcoinTransaction(
@@ -138,7 +173,8 @@ export async function createBitcoinTransaction(
   toAddress: string,
   amountSats: number,
   utxos: UTXO[],
-  feeRate: number
+  feeRate: number,
+  network: BitcoinNetwork = 'mainnet'
 ): Promise<{ txHex: string; fee: number }> {
   // Create key pair from private key
   const privateKeyBuffer = Buffer.from(privateKeyHex, 'hex');
@@ -148,10 +184,12 @@ export async function createBitcoinTransaction(
   // Remove the first byte (compression flag) from the 33-byte compressed pubkey
   const internalPubkey = keyPair.publicKey.slice(1, 33);
 
+  const btcNetwork = getNetwork(network);
+
   // Get sender's address for change
   const { address: changeAddress } = bitcoin.payments.p2tr({
     internalPubkey,
-    network: bitcoin.networks.bitcoin,
+    network: btcNetwork,
   });
 
   if (!changeAddress) {
@@ -159,7 +197,7 @@ export async function createBitcoinTransaction(
   }
 
   // Create transaction builder
-  const psbt = new bitcoin.Psbt({ network: bitcoin.networks.bitcoin });
+  const psbt = new bitcoin.Psbt({ network: btcNetwork });
 
   // Add inputs (UTXOs)
   let totalInput = 0;
@@ -170,7 +208,7 @@ export async function createBitcoinTransaction(
       witnessUtxo: {
         script: bitcoin.payments.p2tr({
           internalPubkey,
-          network: bitcoin.networks.bitcoin,
+          network: btcNetwork,
         }).output!,
         value: BigInt(utxo.value),
       },

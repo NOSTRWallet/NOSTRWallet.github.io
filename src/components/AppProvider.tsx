@@ -17,6 +17,7 @@ interface AppProviderProps {
 const AppConfigSchema = z.object({
   theme: z.enum(['dark', 'light', 'system']),
   relayUrl: z.string().url(),
+  bitcoinNetwork: z.enum(['mainnet', 'testnet', 'testnet4']),
 }) satisfies z.ZodType<AppConfig>;
 
 export function AppProvider(props: AppProviderProps) {

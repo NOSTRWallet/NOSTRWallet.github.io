@@ -1,12 +1,15 @@
 import { createContext } from "react";
 
 export type Theme = "dark" | "light" | "system";
+export type BitcoinNetwork = "mainnet" | "testnet" | "testnet4";
 
 export interface AppConfig {
   /** Current theme */
   theme: Theme;
   /** Selected relay URL */
   relayUrl: string;
+  /** Bitcoin network selection */
+  bitcoinNetwork: BitcoinNetwork;
 }
 
 export interface AppContextType {
